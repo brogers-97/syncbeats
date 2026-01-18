@@ -32,6 +32,7 @@ function createWindow() {
     transparent: false,
     alwaysOnTop: true,
     resizable: true,
+    icon: path.join(__dirname, 'icon.ico'),  // ← Add this line
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
