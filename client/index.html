@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SyncBeats</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Custom Title Bar (draggable) -->
+  <div class="title-bar" id="titleBar">
+    <div class="title-bar-left">
+      <span class="app-icon">♫</span>
+      <span class="app-name">SyncBeats</span>
+    </div>
+    <div class="title-bar-controls">
+      <button class="title-btn pin-btn" id="pinBtn" title="Always on top">📌</button>
+      <button class="title-btn" id="minBtn">─</button>
+      <button class="title-btn close-btn" id="closeBtn">✕</button>
+    </div>
+  </div>
+
+  <div class="app-container">
+    <!-- Landing / Join Screen -->
+    <div class="screen active" id="landingScreen">
+      <div class="landing-content">
+        <div class="logo-section">
+          <div class="logo-icon">🎧</div>
+          <h1>SyncBeats</h1>
+          <p class="tagline">Listen together, game together</p>
+        </div>
+
+        <div class="username-section">
+          <label for="usernameInput">Your name</label>
+          <input type="text" id="usernameInput" placeholder="Enter your name..." maxlength="20">
+        </div>
+
+        <div class="action-buttons">
+          <button class="btn btn-primary" id="createRoomBtn">
+            <span class="btn-icon">+</span>
+            Create Room
+          </button>
+          <div class="divider"><span>or</span></div>
+          <div class="join-section">
+            <input type="text" id="roomCodeInput" placeholder="Room code" maxlength="6">
+            <button class="btn btn-secondary" id="joinRoomBtn">Join</button>
+          </div>
+        </div>
+
+        <div class="server-status" id="serverStatus">
+          <span class="status-dot"></span>
+          <span class="status-text">Connecting...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Room Screen (Widget Mode) -->
+    <div class="screen" id="roomScreen">
+      
+      <!-- Mini Player (Always Visible) -->
+      <div class="mini-player" id="miniPlayer">
+        <div class="mini-player-left">
+          <img class="mini-album-art" id="miniAlbumArt" src="" alt="">
+          <div class="mini-song-info">
+            <div class="mini-song-title" id="currentSongTitle">No song playing</div>
+            <div class="mini-song-artist" id="currentSongAddedBy"></div>
+          </div>
+        </div>
+        <div class="mini-player-controls">
+          <button class="mini-control-btn" id="prevBtn" title="Previous">⏮</button>
+          <button class="mini-control-btn play-btn" id="playPauseBtn" title="Play/Pause">▶</button>
+          <button class="mini-control-btn" id="nextBtn" title="Next">⏭</button>
+        </div>
+        <audio id="audioPlayer" preload="auto"></audio>
+      </div>
+      
+      <!-- Progress Bar -->
+      <div class="progress-bar" id="progressBar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      
+      <!-- Expand/Collapse Button -->
+      <button class="expand-btn" id="expandBtn" title="Expand">
+        <span class="expand-icon">▼</span>
+      </button>
+      
+      <!-- Expanded Panel (Hidden by default) -->
+      <div class="expanded-panel" id="expandedPanel">
+        
+        <!-- Room Info Bar -->
+        <div class="room-info-bar">
+          <div class="room-info">
+            <span class="room-code-label">Room</span>
+            <span class="room-code" id="displayRoomCode">------</span>
+            <button class="copy-btn" id="copyCodeBtn" title="Copy code">📋</button>
+          </div>
+          <div class="users-count" id="usersCount">
+            <span class="user-icon">👤</span>
+            <span class="count">1</span>
+          </div>
+        </div>
+        
+        <!-- Volume Control -->
+        <div class="volume-control">
+          <span class="volume-icon" id="volumeIcon">🔊</span>
+          <input type="range" id="volumeSlider" min="0" max="100" value="50" class="volume-slider">
+        </div>
+
+        <!-- Search Song Section -->
+        <div class="search-song-section">
+          <div class="search-input-wrapper">
+            <input type="text" id="songSearchInput" placeholder="Search for a song...">
+            <button class="btn btn-search" id="searchSongBtn">🔍</button>
+          </div>
+          <div class="search-results" id="searchResults">
+            <!-- Search results will appear here -->
+          </div>
+        </div>
+
+        <!-- Queue Section -->
+        <div class="queue-section">
+          <div class="queue-header">
+            <h3>Queue</h3>
+            <span class="queue-count" id="queueCount">0 songs</span>
+          </div>
+          <div class="queue-list" id="queueList">
+            <div class="empty-queue">
+              <p>Queue is empty</p>
+              <p class="hint">Search for songs above</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Leave Button -->
+        <button class="btn btn-leave" id="leaveRoomBtn">Leave Room</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notifications -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Users Modal -->
+  <div class="modal" id="usersModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>People in Room</h3>
+        <button class="modal-close" id="closeUsersModal">✕</button>
+      </div>
+      <div class="users-list" id="usersList"></div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+{
+  "name": "syncbeats",
+  "version": "1.0.0",
+  "description": "Listen together, game together - A synced music queue app for gaming sessions",
+  "main": "main.js",
+  "author": "Brian",
+  "scripts": {
+    "start": "electron .",
+    "server": "node server/index.js",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.2"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^26.4.0"
+  },
+  "build": {
+    "appId": "com.syncbeats.app",
+    "productName": "SyncBeats",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "client/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/yt-dlp.exe",
+        "to": "yt-dlp.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
