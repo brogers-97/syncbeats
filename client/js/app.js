@@ -33,6 +33,14 @@ let users = [];
 let syncInterval = null;
 let playerReady = false;
 
+// Reconnection state
+let wasInRoom = false;
+let lastRoomCode = null;
+let lastUsername = null;
+let lastIsHost = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 3;
+
 // ========================================
 // DOM Elements
 // ========================================
@@ -300,11 +308,31 @@ function setupSocketListeners() {
     console.log('   Socket ID:', socket.id);
     console.log('========================================');
     updateServerStatus('connected');
+    
+    // If we were in a room, try to rejoin
+    if (wasInRoom && lastRoomCode && lastUsername) {
+      console.log('🔄 Was in room, attempting to rejoin...');
+      attemptRejoin();
+    }
   });
   
-  socket.on('disconnect', () => {
-    console.log('🔴 DISCONNECTED FROM SERVER');
-    updateServerStatus('error');
+  socket.on('disconnect', (reason) => {
+    console.log('🔴 DISCONNECTED FROM SERVER:', reason);
+    updateServerStatus('disconnected');
+    
+    // Remember we were in a room so we can rejoin
+    if (roomCode) {
+      wasInRoom = true;
+      lastRoomCode = roomCode;
+      lastUsername = username;
+      lastIsHost = isHost;
+      console.log('💾 Saved room state for reconnection:', lastRoomCode);
+    }
+    
+    // Show reconnecting message
+    if (wasInRoom) {
+      showToast('Connection lost. Reconnecting...', 'error');
+    }
   });
   
   socket.on('connect_error', (err) => {
@@ -334,6 +362,45 @@ function setupSocketListeners() {
   
   // Leave event
   socket.on('left-room', handleLeftRoom);
+  
+  // Rejoin failed (room no longer exists)
+  socket.on('rejoin-failed', handleRejoinFailed);
+}
+
+function attemptRejoin() {
+  reconnectAttempts++;
+  console.log(`🔄 Rejoin attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
+  
+  if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+    console.log('❌ Max rejoin attempts reached');
+    handleRejoinFailed({ message: 'Could not rejoin room after multiple attempts.' });
+    return;
+  }
+  
+  // Try to rejoin the room
+  if (lastIsHost) {
+    // Host can't rejoin - room is gone. Show message.
+    handleRejoinFailed({ message: 'Room closed because you (the host) disconnected.' });
+  } else {
+    // Guest tries to rejoin
+    console.log('📤 SENDING: join-room (rejoin)', { roomCode: lastRoomCode, username: lastUsername });
+    socket.emit('join-room', { roomCode: lastRoomCode, username: lastUsername });
+  }
+}
+
+function handleRejoinFailed(data) {
+  console.log('❌ REJOIN FAILED:', data);
+  showToast(data.message || 'Room no longer exists', 'error');
+  
+  // Reset reconnection state
+  wasInRoom = false;
+  lastRoomCode = null;
+  lastUsername = null;
+  lastIsHost = false;
+  reconnectAttempts = 0;
+  
+  // Go back to landing
+  resetToLanding();
 }
 
 function updateServerStatus(status) {
@@ -346,6 +413,9 @@ function updateServerStatus(status) {
       break;
     case 'connected':
       statusText.textContent = 'Connected';
+      break;
+    case 'disconnected':
+      statusText.textContent = 'Reconnecting...';
       break;
     case 'error':
       statusText.textContent = 'Connection failed';
@@ -395,6 +465,13 @@ function handleRoomCreated(data) {
   roomCode = data.roomCode;
   users = data.users;
   
+  // Reset reconnection state
+  wasInRoom = false;
+  lastRoomCode = null;
+  lastUsername = null;
+  lastIsHost = false;
+  reconnectAttempts = 0;
+  
   showRoomScreen();
   showToast('Room created! Share the code with friends');
 }
@@ -407,6 +484,10 @@ function handleRoomJoined(data) {
   currentIndex = data.currentIndex;
   isPlaying = data.isPlaying;
   users = data.users;
+  
+  // Reset reconnection state on successful join
+  wasInRoom = false;
+  reconnectAttempts = 0;
   
   showRoomScreen();
   renderQueue();
@@ -424,7 +505,15 @@ function handleRoomJoined(data) {
     }
   }
   
-  showToast('Joined room!');
+  // Show appropriate message
+  if (lastRoomCode === data.roomCode) {
+    showToast('Reconnected to room!');
+    lastRoomCode = null;
+    lastUsername = null;
+    lastIsHost = false;
+  } else {
+    showToast('Joined room!');
+  }
 }
 
 function handleRoomClosed(data) {

@@ -1049,6 +1049,7 @@ input[type="text"]::placeholder {
   flex: 1;
   overflow-y: auto;
   min-height: 80px;
+  max-height: 200px;
 }
 
 .queue-list::-webkit-scrollbar {

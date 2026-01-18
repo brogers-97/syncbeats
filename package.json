@@ -1,6 +1,6 @@
 {
   "name": "syncbeats",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Listen together, game together - A synced music queue app for gaming sessions",
   "main": "main.js",
   "author": "Brian",
