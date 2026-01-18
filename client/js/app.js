@@ -15,7 +15,7 @@ if (isElectron) {
 // ========================================
 
 // IMPORTANT: Change this to your server URL when deployed
-const SERVER_URL = 'http://localhost:3000';
+const SERVER_URL = 'https://syncbeats-server.onrender.com';
 
 // ========================================
 // State
@@ -622,36 +622,52 @@ async function searchSongs() {
 }
 
 function renderSearchResults(videos) {
-  elements.searchResults.innerHTML = videos.map(video => `
-    <div class="search-result-item" data-video-id="${video.videoId}" data-title="${escapeHtml(video.title)}" data-thumbnail="${video.videoThumbnails?.[0]?.url || ''}">
+  const MAX_LENGTH = 600; // 10 minutes
+  
+  elements.searchResults.innerHTML = videos.map(video => {
+    const tooLong = video.lengthSeconds && video.lengthSeconds > MAX_LENGTH;
+    return `
+    <div class="search-result-item ${tooLong ? 'too-long' : ''}" 
+         data-video-id="${video.videoId}" 
+         data-title="${escapeHtml(video.title)}" 
+         data-thumbnail="${video.videoThumbnails?.[0]?.url || ''}"
+         data-length="${video.lengthSeconds || 0}">
       <img class="search-result-thumb" src="${video.videoThumbnails?.[0]?.url || ''}" alt="" loading="lazy">
       <div class="search-result-info">
         <div class="search-result-title">${escapeHtml(video.title)}</div>
         <div class="search-result-channel">${escapeHtml(video.author || 'Unknown')}</div>
       </div>
-      <span class="search-result-duration">${formatDuration(video.lengthSeconds)}</span>
-      <button class="search-result-add" title="Add to queue">+</button>
+      <span class="search-result-duration ${tooLong ? 'too-long' : ''}">${formatDuration(video.lengthSeconds)}${tooLong ? ' ❌' : ''}</span>
+      <button class="search-result-add" title="${tooLong ? 'Too long (10 min max)' : 'Add to queue'}" ${tooLong ? 'disabled' : ''}>+</button>
     </div>
-  `).join('');
+  `}).join('');
   
   // Add click handlers
   elements.searchResults.querySelectorAll('.search-result-add').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const item = btn.closest('.search-result-item');
-      addSongFromSearch(item.dataset.videoId, item.dataset.title, item.dataset.thumbnail);
+      addSongFromSearch(item.dataset.videoId, item.dataset.title, item.dataset.thumbnail, parseInt(item.dataset.length));
     });
   });
   
-  // Also allow clicking the whole row
-  elements.searchResults.querySelectorAll('.search-result-item').forEach(item => {
+  // Also allow clicking the whole row (if not too long)
+  elements.searchResults.querySelectorAll('.search-result-item:not(.too-long)').forEach(item => {
     item.addEventListener('click', () => {
-      addSongFromSearch(item.dataset.videoId, item.dataset.title, item.dataset.thumbnail);
+      addSongFromSearch(item.dataset.videoId, item.dataset.title, item.dataset.thumbnail, parseInt(item.dataset.length));
     });
   });
 }
 
-function addSongFromSearch(videoId, title, thumbnail) {
+function addSongFromSearch(videoId, title, thumbnail, lengthSeconds) {
+  // Check song length - max 10 minutes (600 seconds)
+  const MAX_LENGTH = 600;
+  
+  if (lengthSeconds && lengthSeconds > MAX_LENGTH) {
+    showToast(`Song too long! Max 10 minutes. This song is ${formatDuration(lengthSeconds)}`, 'error');
+    return;
+  }
+  
   console.log('📤 SENDING: add-song', { videoId, title, roomCode, username });
   
   socket.emit('add-song', { videoId, title, thumbnail, roomCode, username });
@@ -833,47 +849,8 @@ function updateNowPlaying() {
 }
 
 async function loadCurrentSong() {
-  const currentSong = queue[currentIndex];
-  if (!currentSong || !playerReady) return;
-  
-  console.log('🎵 Loading song:', currentSong.videoId);
-  
-  // Show loading state
-  showToast('Loading audio...', 'success');
-  
-  // Update mini album art - start with YouTube thumbnail as fallback
-  if (currentSong.thumbnail && elements.miniAlbumArt) {
-    elements.miniAlbumArt.src = currentSong.thumbnail;
-  }
-  
-  // Try to fetch real album art in the background
-  fetchAlbumArt(currentSong.title).then(albumArtUrl => {
-    if (albumArtUrl && elements.miniAlbumArt) {
-      console.log('🎨 Got album art:', albumArtUrl);
-      elements.miniAlbumArt.src = albumArtUrl;
-    }
-  });
-  
-  try {
-    // Get audio URL via local yt-dlp
-    const audioUrl = await ipcRenderer.invoke('yt-stream', currentSong.videoId);
-    console.log('🎵 Got audio URL');
-    
-    // Set audio source and play
-    player.src = audioUrl;
-    player.load();
-    
-    updateNowPlaying();
-    
-  } catch (err) {
-    console.log('❌ Failed to load audio:', err.message);
-    showToast('Failed to load audio', 'error');
-    
-    // Auto-skip on error
-    if (isHost) {
-      setTimeout(() => socket.emit('next-song'), 2000);
-    }
-  }
+  // Just load, don't auto-play (used for initial load)
+  await loadCurrentSongAndPlay(false);
 }
 
 async function fetchAlbumArt(title) {
@@ -995,15 +972,63 @@ function handleSongChanged(data) {
     isPlaying = data.isPlaying;
   }
   
-  loadCurrentSong();
   renderQueue();
   
-  if (isPlaying) {
-    // Wait for audio to load then play
-    player.addEventListener('canplay', function onCanPlay() {
-      player.play();
-      player.removeEventListener('canplay', onCanPlay);
-    });
+  // Load and play the new song
+  loadCurrentSongAndPlay(isPlaying);
+}
+
+// Separate function to load song and optionally auto-play
+async function loadCurrentSongAndPlay(shouldPlay) {
+  const currentSong = queue[currentIndex];
+  if (!currentSong || !playerReady) return;
+  
+  console.log('🎵 Loading song:', currentSong.videoId);
+  
+  // Show loading state
+  showToast('Loading audio...', 'success');
+  
+  // Update mini album art - start with YouTube thumbnail as fallback
+  if (currentSong.thumbnail && elements.miniAlbumArt) {
+    elements.miniAlbumArt.src = currentSong.thumbnail;
+  }
+  
+  // Try to fetch real album art in the background
+  fetchAlbumArt(currentSong.title).then(albumArtUrl => {
+    if (albumArtUrl && elements.miniAlbumArt) {
+      console.log('🎨 Got album art:', albumArtUrl);
+      elements.miniAlbumArt.src = albumArtUrl;
+    }
+  });
+  
+  try {
+    // Get audio URL via local yt-dlp
+    const audioUrl = await ipcRenderer.invoke('yt-stream', currentSong.videoId);
+    console.log('🎵 Got audio URL');
+    
+    // Set audio source
+    player.src = audioUrl;
+    player.load();
+    
+    updateNowPlaying();
+    
+    // Wait for audio to be ready, then play if needed
+    if (shouldPlay) {
+      player.addEventListener('canplay', function onCanPlay() {
+        console.log('🎵 Audio ready, playing...');
+        player.play();
+        player.removeEventListener('canplay', onCanPlay);
+      });
+    }
+    
+  } catch (err) {
+    console.log('❌ Failed to load audio:', err.message);
+    showToast('Failed to load audio', 'error');
+    
+    // Auto-skip on error
+    if (isHost) {
+      setTimeout(() => socket.emit('next-song'), 2000);
+    }
   }
 }
 

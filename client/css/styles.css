@@ -904,6 +904,19 @@ input[type="text"]::placeholder {
   background: var(--bg-tertiary);
 }
 
+.search-result-item.too-long {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.search-result-item.too-long:hover {
+  background: var(--bg-secondary);
+}
+
+.search-result-duration.too-long {
+  color: var(--danger);
+}
+
 .search-result-thumb {
   width: 60px;
   height: 45px;
