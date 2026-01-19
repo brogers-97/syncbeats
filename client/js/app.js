@@ -476,7 +476,7 @@ function handleRoomCreated(data) {
   showToast('Room created! Share the code with friends');
 }
 
-function handleRoomJoined(data) {
+async function handleRoomJoined(data) {
   console.log('✅ ROOM JOINED:', data);
   isHost = data.isHost;
   roomCode = data.roomCode;
@@ -494,14 +494,30 @@ function handleRoomJoined(data) {
   updateNowPlaying();
   
   // Sync to current playback state
-  if (queue.length > 0 && playerReady) {
-    loadCurrentSong();
-    if (data.isPlaying) {
-      player.addEventListener('canplay', function onCanPlay() {
+  if (queue.length > 0 && queue[currentIndex] && playerReady) {
+    try {
+      const currentSong = queue[currentIndex];
+      const audioUrl = await ipcRenderer.invoke('yt-stream', currentSong.videoId);
+      
+      player.src = audioUrl;
+      player.load();
+      
+      await waitForPlayerReady();
+      
+      // Sync to the current time
+      if (data.currentTime) {
         player.currentTime = data.currentTime;
-        player.play();
-        player.removeEventListener('canplay', onCanPlay);
-      });
+      }
+      
+      if (data.isPlaying) {
+        try {
+          await player.play();
+        } catch (e) {
+          console.log('⚠️ Auto-play blocked on join');
+        }
+      }
+    } catch (err) {
+      console.log('❌ Failed to sync on join:', err.message);
     }
   }
   
@@ -1045,7 +1061,9 @@ function handlePlaybackState(data) {
   isPlaying = data.isPlaying;
   
   if (isPlaying) {
-    player.play();
+    player.play().catch(e => {
+      console.log('⚠️ Play failed:', e.message);
+    });
   } else {
     player.pause();
   }
@@ -1067,12 +1085,58 @@ function handleSongChanged(data) {
   loadCurrentSongAndPlay(isPlaying);
 }
 
-// Separate function to load song and optionally auto-play
+// ========================================
+// FIXED: Helper function to wait for player to be ready
+// ========================================
+function waitForPlayerReady() {
+  return new Promise((resolve) => {
+    // If already ready, resolve immediately
+    if (player.readyState >= 3) { // HAVE_FUTURE_DATA or HAVE_ENOUGH_DATA
+      console.log('🎵 Player already ready (readyState:', player.readyState, ')');
+      resolve();
+      return;
+    }
+    
+    // Otherwise wait for canplaythrough event
+    const onReady = () => {
+      console.log('🎵 Player became ready');
+      player.removeEventListener('canplaythrough', onReady);
+      player.removeEventListener('canplay', onReadyFallback);
+      clearTimeout(fallbackTimeout);
+      resolve();
+    };
+    
+    const onReadyFallback = () => {
+      console.log('🎵 Player ready (canplay fallback)');
+      player.removeEventListener('canplaythrough', onReady);
+      player.removeEventListener('canplay', onReadyFallback);
+      clearTimeout(fallbackTimeout);
+      resolve();
+    };
+    
+    player.addEventListener('canplaythrough', onReady);
+    player.addEventListener('canplay', onReadyFallback);
+    
+    // Fallback timeout - if nothing fires in 5 seconds, check readyState and proceed
+    const fallbackTimeout = setTimeout(() => {
+      if (player.readyState >= 2) { // HAVE_CURRENT_DATA
+        console.log('🎵 Using timeout fallback (readyState:', player.readyState, ')');
+        player.removeEventListener('canplaythrough', onReady);
+        player.removeEventListener('canplay', onReadyFallback);
+        resolve();
+      }
+    }, 5000);
+  });
+}
+
+// ========================================
+// FIXED: Separate function to load song and optionally auto-play
+// ========================================
 async function loadCurrentSongAndPlay(shouldPlay) {
   const currentSong = queue[currentIndex];
   if (!currentSong || !playerReady) return;
   
-  console.log('🎵 Loading song:', currentSong.videoId);
+  console.log('🎵 Loading song:', currentSong.videoId, 'shouldPlay:', shouldPlay);
   
   // Show loading state
   showToast('Loading audio...', 'success');
@@ -1095,6 +1159,10 @@ async function loadCurrentSongAndPlay(shouldPlay) {
     const audioUrl = await ipcRenderer.invoke('yt-stream', currentSong.videoId);
     console.log('🎵 Got audio URL');
     
+    // Remove any existing event listeners to prevent duplicates
+    player.oncanplay = null;
+    player.oncanplaythrough = null;
+    
     // Set audio source
     player.src = audioUrl;
     player.load();
@@ -1103,11 +1171,25 @@ async function loadCurrentSongAndPlay(shouldPlay) {
     
     // Wait for audio to be ready, then play if needed
     if (shouldPlay) {
-      player.addEventListener('canplay', function onCanPlay() {
-        console.log('🎵 Audio ready, playing...');
-        player.play();
-        player.removeEventListener('canplay', onCanPlay);
-      });
+      // Use Promise-based approach to handle the race condition
+      await waitForPlayerReady();
+      
+      console.log('🎵 Audio ready, attempting to play...');
+      try {
+        await player.play();
+        console.log('🎵 Playback started successfully');
+        
+        // If we're not the host, request a time sync to catch up
+        if (!isHost) {
+          setTimeout(() => {
+            socket.emit('request-sync');
+          }, 500);
+        }
+      } catch (playError) {
+        console.log('⚠️ Auto-play blocked or failed:', playError.message);
+        // Update UI to show paused state if autoplay was blocked
+        updatePlayPauseButton();
+      }
     }
     
   } catch (err) {
@@ -1134,7 +1216,10 @@ function handleTimeSync(data) {
   }
 }
 
-function handleFullSync(data) {
+// ========================================
+// FIXED: handleFullSync function
+// ========================================
+async function handleFullSync(data) {
   console.log('🔄 FULL SYNC:', data);
   queue = data.queue;
   currentIndex = data.currentIndex;
@@ -1143,14 +1228,31 @@ function handleFullSync(data) {
   renderQueue();
   updateNowPlaying();
   
-  if (queue.length > 0) {
-    loadCurrentSong();
-    if (isPlaying) {
-      player.addEventListener('canplay', function onCanPlay() {
+  if (queue.length > 0 && queue[currentIndex]) {
+    try {
+      // Get audio URL
+      const currentSong = queue[currentIndex];
+      const audioUrl = await ipcRenderer.invoke('yt-stream', currentSong.videoId);
+      
+      player.src = audioUrl;
+      player.load();
+      
+      await waitForPlayerReady();
+      
+      // Sync to the current time
+      if (data.currentTime) {
         player.currentTime = data.currentTime;
-        player.play();
-        player.removeEventListener('canplay', onCanPlay);
-      });
+      }
+      
+      if (data.isPlaying) {
+        try {
+          await player.play();
+        } catch (e) {
+          console.log('⚠️ Auto-play blocked on sync');
+        }
+      }
+    } catch (err) {
+      console.log('❌ Full sync failed:', err.message);
     }
   }
 }
