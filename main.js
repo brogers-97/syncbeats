@@ -147,10 +147,7 @@ function startAudioServer() {
     const videoId = req.url.replace('/', '').split('?')[0];
     const audioPath = path.join(getTempAudioDir(), `${videoId}.webm`);
     
-    console.log(`🔊 Audio request for: ${videoId}`);
-    
     if (!fs.existsSync(audioPath)) {
-      console.log(`   ❌ Audio file not found: ${audioPath}`);
       res.writeHead(404);
       res.end('Not found');
       return;
@@ -187,7 +184,7 @@ function startAudioServer() {
   });
   
   audioServer.listen(AUDIO_SERVER_PORT, '127.0.0.1', () => {
-    console.log(`🔊 Audio server running on http://127.0.0.1:${AUDIO_SERVER_PORT}`);
+    console.log(`🔊 Audio server started`);
   });
   
   audioServer.on('error', (err) => {
@@ -214,12 +211,6 @@ function createWindow() {
   });
 
   mainWindow.loadFile('client/index.html');
-  
-  // Log whenever window size changes
-  mainWindow.on('resize', () => {
-    const size = mainWindow.getSize();
-    console.log(`📐 Window resized to: ${size[0]} x ${size[1]}`);
-  });
 
   // Uncomment for debugging:
   // mainWindow.webContents.openDevTools();
@@ -268,14 +259,12 @@ ipcMain.on('toggle-always-on-top', (event) => {
 
 // Entered a room - start expanded so user can add songs
 ipcMain.on('entered-room', () => {
-  console.log('📥 IPC: entered-room - resizing to expanded');
   mainWindow.setMinimumSize(300, COLLAPSED_HEIGHT);
   mainWindow.setSize(WINDOW_WIDTH, EXPANDED_HEIGHT);
 });
 
 // Toggle between collapsed widget and expanded panel
 ipcMain.on('toggle-expanded', (event, isExpanded) => {
-  console.log('📥 IPC: toggle-expanded -', isExpanded ? 'EXPANDED' : 'COLLAPSED');
   const newHeight = isExpanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT;
   
   mainWindow.setMinimumSize(300, COLLAPSED_HEIGHT);
@@ -284,7 +273,6 @@ ipcMain.on('toggle-expanded', (event, isExpanded) => {
 
 // Left room - back to landing screen
 ipcMain.on('show-landing', () => {
-  console.log('📥 IPC: show-landing');
   mainWindow.setMinimumSize(300, LANDING_HEIGHT);
   mainWindow.setSize(WINDOW_WIDTH, LANDING_HEIGHT);
 });
@@ -295,7 +283,6 @@ ipcMain.on('show-landing', () => {
 
 // Search for songs
 ipcMain.handle('yt-search', async (event, query) => {
-  console.log(`🔍 SEARCH: "${query}"`);
   const ytdlpPath = getYtDlpPath();
   
   return new Promise((resolve, reject) => {
@@ -331,20 +318,16 @@ ipcMain.handle('yt-search', async (event, query) => {
               videoThumbnails: [{ url: item.thumbnail || `https://i.ytimg.com/vi/${item.id}/mqdefault.jpg` }]
             };
           });
-          console.log(`   ✅ Found ${videos.length} results`);
           resolve(videos);
         } catch (e) {
-          console.log('   ❌ Parse error:', e.message);
           reject(new Error('Failed to parse results'));
         }
       } else {
-        console.log('   ❌ yt-dlp error:', stderr);
         reject(new Error('Search failed'));
       }
     });
     
     ytdlp.on('error', (err) => {
-      console.log('   ❌ Spawn error:', err.message);
       reject(err);
     });
   });
@@ -352,7 +335,6 @@ ipcMain.handle('yt-search', async (event, query) => {
 
 // Get audio stream URL - now downloads the file and serves it locally
 ipcMain.handle('yt-stream', async (event, videoId) => {
-  console.log(`🎵 STREAM: ${videoId}`);
   const ytdlpPath = getYtDlpPath();
   const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const audioPath = path.join(getTempAudioDir(), `${videoId}.webm`);
@@ -363,14 +345,11 @@ ipcMain.handle('yt-stream', async (event, videoId) => {
     const age = Date.now() - stats.mtimeMs;
     // Use cache if less than 30 minutes old
     if (age < 30 * 60 * 1000) {
-      console.log(`   ✅ Using cached audio`);
       return `http://127.0.0.1:${AUDIO_SERVER_PORT}/${videoId}`;
     }
   }
   
   return new Promise((resolve, reject) => {
-    console.log(`   ⬇️ Downloading audio...`);
-    
     const ytdlp = spawn(ytdlpPath, [
       '-f', 'bestaudio[ext=webm]/bestaudio',
       '-o', audioPath,
@@ -386,27 +365,95 @@ ipcMain.handle('yt-stream', async (event, videoId) => {
     });
     
     ytdlp.stdout.on('data', (data) => {
-      // Progress output
-      const line = data.toString().trim();
-      if (line.includes('%')) {
-        process.stdout.write(`\r   ${line}`);
-      }
+      // Progress output (optional - can remove if too verbose)
     });
     
     ytdlp.on('close', (code) => {
-      console.log(''); // New line after progress
-      
       if (code === 0 && fs.existsSync(audioPath)) {
-        console.log(`   ✅ Download complete`);
         resolve(`http://127.0.0.1:${AUDIO_SERVER_PORT}/${videoId}`);
       } else {
-        console.log('   ❌ yt-dlp error:', stderr);
         reject(new Error('Failed to download audio'));
       }
     });
     
     ytdlp.on('error', (err) => {
-      console.log('   ❌ Spawn error:', err.message);
+      reject(err);
+    });
+  });
+});
+
+// Get related videos for auto-queue feature
+ipcMain.handle('yt-related', async (event, videoId) => {
+  const ytdlpPath = getYtDlpPath();
+  const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  
+  return new Promise((resolve, reject) => {
+    // Get full video info which includes related videos
+    const ytdlp = spawn(ytdlpPath, [
+      '--dump-json',
+      '--no-download',
+      '--no-warnings',
+      '--flat-playlist',
+      ytUrl
+    ]);
+    
+    let stdout = '';
+    let stderr = '';
+    
+    ytdlp.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+    
+    ytdlp.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+    
+    ytdlp.on('close', (code) => {
+      if (code === 0 && stdout.trim()) {
+        try {
+          const videoInfo = JSON.parse(stdout.trim());
+          
+          // Try to get related videos from various possible fields
+          let related = [];
+          
+          // Check for related videos in the response
+          if (videoInfo.related_videos) {
+            related = videoInfo.related_videos;
+          } else if (videoInfo.entries) {
+            related = videoInfo.entries;
+          }
+          
+          // If no related videos found, fall back to searching by title/artist
+          if (related.length === 0) {
+            resolve({ fallbackSearch: videoInfo.title || videoInfo.fulltitle });
+            return;
+          }
+          
+          // Filter and format related videos
+          const MAX_LENGTH = 600; // 10 minutes max
+          const videos = related
+            .filter(item => item.id && item.id !== videoId)
+            .filter(item => !item.duration || item.duration <= MAX_LENGTH)
+            .slice(0, 10)
+            .map(item => ({
+              type: 'video',
+              videoId: item.id,
+              title: item.title || 'Unknown Title',
+              author: item.channel || item.uploader || 'Unknown',
+              lengthSeconds: item.duration || 0,
+              videoThumbnails: [{ url: item.thumbnail || `https://i.ytimg.com/vi/${item.id}/mqdefault.jpg` }]
+            }));
+          
+          resolve({ videos });
+        } catch (e) {
+          reject(new Error('Failed to parse related videos'));
+        }
+      } else {
+        reject(new Error('Failed to get related videos'));
+      }
+    });
+    
+    ytdlp.on('error', (err) => {
       reject(err);
     });
   });

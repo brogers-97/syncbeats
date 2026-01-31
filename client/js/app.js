@@ -41,6 +41,13 @@ let lastIsHost = false;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 3;
 
+// Auto-queue state
+let autoQueueEnabled = false;
+let isAutoQueueing = false;
+let repeatEnabled = false;
+const AUTO_QUEUE_THRESHOLD = 2; // Trigger when 2 or fewer songs remaining
+const AUTO_QUEUE_ADD_COUNT = 5; // Add 5 songs at a time
+
 // ========================================
 // DOM Elements
 // ========================================
@@ -85,6 +92,8 @@ const elements = {
   searchResults: document.getElementById('searchResults'),
   queueList: document.getElementById('queueList'),
   queueCount: document.getElementById('queueCount'),
+  autoQueueBtn: document.getElementById('autoQueueBtn'),
+  repeatBtn: document.getElementById('repeatBtn'),
   
   // Other
   leaveRoomBtn: document.getElementById('leaveRoomBtn'),
@@ -123,13 +132,8 @@ function toggleExpanded() {
   elements.expandBtn.classList.toggle('expanded', isExpanded);
   elements.expandedPanel.classList.toggle('active', isExpanded);
   
-  console.log('🔄 Toggle expanded:', isExpanded);
-  console.log('   isElectron:', isElectron);
-  console.log('   ipcRenderer:', ipcRenderer ? 'exists' : 'null');
-  
   // Notify Electron to resize window
   if (isElectron && ipcRenderer) {
-    console.log('   Sending toggle-expanded IPC...');
     ipcRenderer.send('toggle-expanded', isExpanded);
   }
 }
@@ -222,6 +226,16 @@ function setupEventListeners() {
   
   elements.leaveRoomBtn.addEventListener('click', leaveRoom);
   
+  // Auto-queue button (host only)
+  if (elements.autoQueueBtn) {
+    elements.autoQueueBtn.addEventListener('click', toggleAutoQueue);
+  }
+  
+  // Repeat button (host only)
+  if (elements.repeatBtn) {
+    elements.repeatBtn.addEventListener('click', toggleRepeat);
+  }
+  
   // Close modal on backdrop click
   elements.usersModal.addEventListener('click', (e) => {
     if (e.target === elements.usersModal) hideUsersModal();
@@ -239,40 +253,37 @@ function loadAudioPlayer() {
   player.volume = 0.5;
   
   player.addEventListener('play', () => {
-    console.log('🎵 PLAYER STATE: PLAYING');
     isPlaying = true;
     updatePlayPauseButton();
     startProgressUpdate();
   });
   
   player.addEventListener('pause', () => {
-    console.log('🎵 PLAYER STATE: PAUSED');
     isPlaying = false;
     updatePlayPauseButton();
     stopProgressUpdate();
   });
   
   player.addEventListener('ended', () => {
-    console.log('🎵 PLAYER STATE: ENDED');
     if (isHost) {
-      socket.emit('song-ended');
+      // Check if we're at the last song and repeat is enabled
+      if (repeatEnabled && currentIndex >= queue.length - 1) {
+        // Go back to first song
+        socket.emit('play-song', 0);
+      } else {
+        socket.emit('song-ended');
+      }
     }
   });
   
   player.addEventListener('error', (e) => {
-    console.log('❌ AUDIO ERROR:', e);
     showToast('Error playing track', 'error');
     if (isHost) {
       setTimeout(() => socket.emit('next-song'), 2000);
     }
   });
   
-  player.addEventListener('canplay', () => {
-    console.log('🎵 PLAYER STATE: READY TO PLAY');
-  });
-  
   playerReady = true;
-  console.log('🎵 AUDIO PLAYER READY');
 }
 
 // ========================================
@@ -303,21 +314,24 @@ function initSocket() {
 
 function setupSocketListeners() {
   socket.on('connect', () => {
-    console.log('========================================');
-    console.log('🟢 CONNECTED TO SERVER');
-    console.log('   Socket ID:', socket.id);
-    console.log('========================================');
+    console.log('🟢 Connected to server');
     updateServerStatus('connected');
     
     // If we were in a room, try to rejoin
     if (wasInRoom && lastRoomCode && lastUsername) {
-      console.log('🔄 Was in room, attempting to rejoin...');
       attemptRejoin();
     }
   });
   
+  // Keep server awake - ping every 5 minutes
+  setInterval(() => {
+    if (socket && socket.connected) {
+      socket.emit('ping-keep-alive');
+    }
+  }, 5 * 60 * 1000);
+  
   socket.on('disconnect', (reason) => {
-    console.log('🔴 DISCONNECTED FROM SERVER:', reason);
+    console.log('🔴 Disconnected:', reason);
     updateServerStatus('disconnected');
     
     // Remember we were in a room so we can rejoin
@@ -326,7 +340,6 @@ function setupSocketListeners() {
       lastRoomCode = roomCode;
       lastUsername = username;
       lastIsHost = isHost;
-      console.log('💾 Saved room state for reconnection:', lastRoomCode);
     }
     
     // Show reconnecting message
@@ -336,8 +349,7 @@ function setupSocketListeners() {
   });
   
   socket.on('connect_error', (err) => {
-    console.log('❌ CONNECTION ERROR:', err.message);
-    console.log('   Make sure server is running at:', SERVER_URL);
+    console.log('❌ Connection error:', err.message);
     updateServerStatus('error');
   });
   
@@ -369,27 +381,21 @@ function setupSocketListeners() {
 
 function attemptRejoin() {
   reconnectAttempts++;
-  console.log(`🔄 Rejoin attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
   
   if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-    console.log('❌ Max rejoin attempts reached');
     handleRejoinFailed({ message: 'Could not rejoin room after multiple attempts.' });
     return;
   }
   
   // Try to rejoin the room
   if (lastIsHost) {
-    // Host can't rejoin - room is gone. Show message.
     handleRejoinFailed({ message: 'Room closed because you (the host) disconnected.' });
   } else {
-    // Guest tries to rejoin
-    console.log('📤 SENDING: join-room (rejoin)', { roomCode: lastRoomCode, username: lastUsername });
     socket.emit('join-room', { roomCode: lastRoomCode, username: lastUsername });
   }
 }
 
 function handleRejoinFailed(data) {
-  console.log('❌ REJOIN FAILED:', data);
   showToast(data.message || 'Room no longer exists', 'error');
   
   // Reset reconnection state
@@ -435,7 +441,6 @@ function createRoom() {
     return;
   }
   
-  console.log('📤 SENDING: create-room', username);
   socket.emit('create-room', username);
 }
 
@@ -455,12 +460,10 @@ function joinRoom() {
     return;
   }
   
-  console.log('📤 SENDING: join-room', { roomCode: code, username });
   socket.emit('join-room', { roomCode: code, username });
 }
 
 function handleRoomCreated(data) {
-  console.log('✅ ROOM CREATED:', data);
   isHost = data.isHost;
   roomCode = data.roomCode;
   users = data.users;
@@ -477,7 +480,6 @@ function handleRoomCreated(data) {
 }
 
 async function handleRoomJoined(data) {
-  console.log('✅ ROOM JOINED:', data);
   isHost = data.isHost;
   roomCode = data.roomCode;
   queue = data.queue;
@@ -533,13 +535,11 @@ async function handleRoomJoined(data) {
 }
 
 function handleRoomClosed(data) {
-  console.log('🚪 ROOM CLOSED:', data);
   showToast(data.message, 'error');
   resetToLanding();
 }
 
 function handleError(data) {
-  console.log('❌ ERROR FROM SERVER:', data);
   showToast(data.message, 'error');
 }
 
@@ -684,8 +684,6 @@ async function searchSongs() {
     return;
   }
   
-  console.log('🔍 SEARCHING:', query);
-  
   // Show loading state
   elements.searchResults.classList.add('active');
   elements.searchResults.innerHTML = `
@@ -698,7 +696,6 @@ async function searchSongs() {
   try {
     // Use IPC to call yt-dlp in main process
     const results = await ipcRenderer.invoke('yt-search', query);
-    console.log('✅ Search results:', results);
     
     // Filter to only videos (not playlists/channels)
     const videos = results.filter(item => item.type === 'video');
@@ -716,7 +713,6 @@ async function searchSongs() {
     renderSearchResults(videos.slice(0, 10)); // Show top 10
     
   } catch (err) {
-    console.log('❌ Search failed:', err.message);
     elements.searchResults.innerHTML = `
       <div class="search-error">
         Search failed. Please try again.<br>
@@ -773,8 +769,6 @@ function addSongFromSearch(videoId, title, thumbnail, lengthSeconds) {
     return;
   }
   
-  console.log('📤 SENDING: add-song', { videoId, title, roomCode, username });
-  
   socket.emit('add-song', { videoId, title, thumbnail, roomCode, username });
   
   // Clear search and hide results
@@ -816,7 +810,6 @@ async function fetchVideoTitle(videoId) {
 }
 
 function handleQueueUpdated(data) {
-  console.log('🎵 QUEUE UPDATED:', data);
   queue = data.queue;
   currentIndex = data.currentIndex;
   renderQueue();
@@ -825,6 +818,11 @@ function handleQueueUpdated(data) {
   // Load song if this is the first one
   if (queue.length === 1 && playerReady) {
     loadCurrentSong();
+  }
+  
+  // Check if we need to auto-queue more songs (host only)
+  if (isHost && autoQueueEnabled) {
+    checkAutoQueue();
   }
 }
 
@@ -1057,13 +1055,10 @@ function nextSong() {
 }
 
 function handlePlaybackState(data) {
-  console.log('▶️ PLAYBACK STATE:', data);
   isPlaying = data.isPlaying;
   
   if (isPlaying) {
-    player.play().catch(e => {
-      console.log('⚠️ Play failed:', e.message);
-    });
+    player.play().catch(e => {});
   } else {
     player.pause();
   }
@@ -1072,7 +1067,6 @@ function handlePlaybackState(data) {
 }
 
 function handleSongChanged(data) {
-  console.log('⏭️ SONG CHANGED:', data);
   currentIndex = data.currentIndex;
   
   if (data.isPlaying !== undefined) {
@@ -1091,15 +1085,13 @@ function handleSongChanged(data) {
 function waitForPlayerReady() {
   return new Promise((resolve) => {
     // If already ready, resolve immediately
-    if (player.readyState >= 3) { // HAVE_FUTURE_DATA or HAVE_ENOUGH_DATA
-      console.log('🎵 Player already ready (readyState:', player.readyState, ')');
+    if (player.readyState >= 3) {
       resolve();
       return;
     }
     
     // Otherwise wait for canplaythrough event
     const onReady = () => {
-      console.log('🎵 Player became ready');
       player.removeEventListener('canplaythrough', onReady);
       player.removeEventListener('canplay', onReadyFallback);
       clearTimeout(fallbackTimeout);
@@ -1107,7 +1099,6 @@ function waitForPlayerReady() {
     };
     
     const onReadyFallback = () => {
-      console.log('🎵 Player ready (canplay fallback)');
       player.removeEventListener('canplaythrough', onReady);
       player.removeEventListener('canplay', onReadyFallback);
       clearTimeout(fallbackTimeout);
@@ -1119,8 +1110,7 @@ function waitForPlayerReady() {
     
     // Fallback timeout - if nothing fires in 5 seconds, check readyState and proceed
     const fallbackTimeout = setTimeout(() => {
-      if (player.readyState >= 2) { // HAVE_CURRENT_DATA
-        console.log('🎵 Using timeout fallback (readyState:', player.readyState, ')');
+      if (player.readyState >= 2) {
         player.removeEventListener('canplaythrough', onReady);
         player.removeEventListener('canplay', onReadyFallback);
         resolve();
@@ -1136,8 +1126,6 @@ async function loadCurrentSongAndPlay(shouldPlay) {
   const currentSong = queue[currentIndex];
   if (!currentSong || !playerReady) return;
   
-  console.log('🎵 Loading song:', currentSong.videoId, 'shouldPlay:', shouldPlay);
-  
   // Show loading state
   showToast('Loading audio...', 'success');
   
@@ -1149,7 +1137,6 @@ async function loadCurrentSongAndPlay(shouldPlay) {
   // Try to fetch real album art in the background
   fetchAlbumArt(currentSong.title).then(albumArtUrl => {
     if (albumArtUrl && elements.miniAlbumArt) {
-      console.log('🎨 Got album art:', albumArtUrl);
       elements.miniAlbumArt.src = albumArtUrl;
     }
   });
@@ -1157,7 +1144,6 @@ async function loadCurrentSongAndPlay(shouldPlay) {
   try {
     // Get audio URL via local yt-dlp
     const audioUrl = await ipcRenderer.invoke('yt-stream', currentSong.videoId);
-    console.log('🎵 Got audio URL');
     
     // Remove any existing event listeners to prevent duplicates
     player.oncanplay = null;
@@ -1171,13 +1157,10 @@ async function loadCurrentSongAndPlay(shouldPlay) {
     
     // Wait for audio to be ready, then play if needed
     if (shouldPlay) {
-      // Use Promise-based approach to handle the race condition
       await waitForPlayerReady();
       
-      console.log('🎵 Audio ready, attempting to play...');
       try {
         await player.play();
-        console.log('🎵 Playback started successfully');
         
         // If we're not the host, request a time sync to catch up
         if (!isHost) {
@@ -1186,20 +1169,50 @@ async function loadCurrentSongAndPlay(shouldPlay) {
           }, 500);
         }
       } catch (playError) {
-        console.log('⚠️ Auto-play blocked or failed:', playError.message);
         // Update UI to show paused state if autoplay was blocked
         updatePlayPauseButton();
       }
     }
     
+    // Pre-download the next song in the background
+    preloadNextSong();
+    
   } catch (err) {
-    console.log('❌ Failed to load audio:', err.message);
     showToast('Failed to load audio', 'error');
     
     // Auto-skip on error
     if (isHost) {
       setTimeout(() => socket.emit('next-song'), 2000);
     }
+  }
+}
+
+// Pre-download the next song so it's ready instantly
+async function preloadNextSong() {
+  const nextIndex = currentIndex + 1;
+  
+  // Check if there's a next song
+  if (nextIndex >= queue.length) {
+    // If repeat is enabled, preload the first song
+    if (repeatEnabled && queue.length > 0) {
+      const firstSong = queue[0];
+      try {
+        await ipcRenderer.invoke('yt-stream', firstSong.videoId);
+      } catch (e) {
+        // Silently fail - it's just a preload
+      }
+    }
+    return;
+  }
+  
+  const nextSong = queue[nextIndex];
+  if (!nextSong) return;
+  
+  try {
+    // This will download and cache the audio file
+    await ipcRenderer.invoke('yt-stream', nextSong.videoId);
+  } catch (e) {
+    // Silently fail - it's just a preload
   }
 }
 
@@ -1211,7 +1224,6 @@ function handleTimeSync(data) {
   
   // Only sync if more than 2 seconds off
   if (diff > 2) {
-    console.log(`🔄 TIME SYNC: jumping from ${currentTime.toFixed(1)}s to ${data.currentTime.toFixed(1)}s`);
     player.currentTime = data.currentTime;
   }
 }
@@ -1220,7 +1232,6 @@ function handleTimeSync(data) {
 // FIXED: handleFullSync function
 // ========================================
 async function handleFullSync(data) {
-  console.log('🔄 FULL SYNC:', data);
   queue = data.queue;
   currentIndex = data.currentIndex;
   isPlaying = data.isPlaying;
@@ -1304,6 +1315,191 @@ function stopProgressUpdate() {
     clearInterval(progressInterval);
     progressInterval = null;
   }
+}
+
+// ========================================
+// Auto-Queue Feature
+// ========================================
+
+function toggleAutoQueue() {
+  autoQueueEnabled = !autoQueueEnabled;
+  
+  const btn = document.getElementById('autoQueueBtn');
+  if (btn) {
+    btn.classList.toggle('active', autoQueueEnabled);
+    btn.title = autoQueueEnabled ? 'Auto-queue ON - Click to disable' : 'Auto-queue OFF - Click to enable';
+  }
+  
+  showToast(autoQueueEnabled ? '🎲 Auto-queue enabled!' : 'Auto-queue disabled');
+  
+  // If enabled and queue is low, trigger immediately
+  if (autoQueueEnabled && isHost) {
+    checkAutoQueue();
+  }
+}
+
+function toggleRepeat() {
+  repeatEnabled = !repeatEnabled;
+  
+  const btn = document.getElementById('repeatBtn');
+  if (btn) {
+    btn.classList.toggle('active', repeatEnabled);
+    btn.title = repeatEnabled ? 'Repeat ON - Click to disable' : 'Repeat OFF - Click to enable';
+  }
+  
+  showToast(repeatEnabled ? '🔁 Repeat enabled!' : 'Repeat disabled');
+}
+
+function checkAutoQueue() {
+  // Calculate remaining songs
+  const remainingSongs = queue.length - currentIndex;
+  
+  // If we have enough songs or already auto-queueing, skip
+  if (remainingSongs > AUTO_QUEUE_THRESHOLD || isAutoQueueing) {
+    return;
+  }
+  
+  // Need at least one song to base recommendations on
+  if (queue.length === 0) {
+    return;
+  }
+  
+  // Trigger auto-queue
+  autoQueueSongs();
+}
+
+async function autoQueueSongs() {
+  if (isAutoQueueing) return;
+  isAutoQueueing = true;
+  
+  showToast('🎲 Finding similar songs...', 'success');
+  
+  try {
+    // Get the current or last song to base recommendations on
+    const baseSong = queue[currentIndex] || queue[queue.length - 1];
+    if (!baseSong) {
+      isAutoQueueing = false;
+      return;
+    }
+    
+    // Parse the artist from the title (usually "Artist - Song")
+    const parsed = parseTitle(baseSong.title);
+    const artistName = parsed.artist || baseSong.title.split('-')[0].trim();
+    
+    // Search for more songs by the same artist or similar
+    let videosToAdd = [];
+    
+    try {
+      // Search for artist's other songs instead of "related videos"
+      // This gives better variety
+      const searchQuery = `${artistName} songs`;
+      const searchResults = await ipcRenderer.invoke('yt-search', searchQuery);
+      videosToAdd = searchResults;
+    } catch (err) {
+      isAutoQueueing = false;
+      return;
+    }
+    
+    // Filter out songs already in queue (by videoId)
+    const existingIds = new Set(queue.map(s => s.videoId));
+    videosToAdd = videosToAdd.filter(v => !existingIds.has(v.videoId));
+    
+    // Filter out songs with very similar titles (to avoid lyric/official/remix versions)
+    const existingTitles = queue.map(s => normalizeTitleForComparison(s.title));
+    videosToAdd = videosToAdd.filter(v => {
+      const normalizedTitle = normalizeTitleForComparison(v.title);
+      // Check if any existing title is too similar
+      return !existingTitles.some(existing => titlesSimilar(existing, normalizedTitle));
+    });
+    
+    // Take up to AUTO_QUEUE_ADD_COUNT songs
+    videosToAdd = videosToAdd.slice(0, AUTO_QUEUE_ADD_COUNT);
+    
+    if (videosToAdd.length === 0) {
+      showToast('No new songs found', 'error');
+      isAutoQueueing = false;
+      return;
+    }
+    
+    // Add songs to queue
+    for (const video of videosToAdd) {
+      socket.emit('add-song', {
+        videoId: video.videoId,
+        title: video.title,
+        thumbnail: video.videoThumbnails?.[0]?.url || `https://i.ytimg.com/vi/${video.videoId}/mqdefault.jpg`,
+        roomCode,
+        username: 'AutoQueue'
+      });
+      
+      // Small delay between adds to avoid overwhelming
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    showToast(`🎲 Added ${videosToAdd.length} songs by ${artistName}!`);
+    
+  } catch (err) {
+    showToast('Failed to auto-queue songs', 'error');
+  }
+  
+  isAutoQueueing = false;
+}
+
+// Normalize title for comparison (remove common suffixes, lowercase, etc.)
+function normalizeTitleForComparison(title) {
+  return title
+    .toLowerCase()
+    .replace(/\s*\(official\s*(music\s*)?video\)/gi, '')
+    .replace(/\s*\[official\s*(music\s*)?video\]/gi, '')
+    .replace(/\s*\(official\s*audio\)/gi, '')
+    .replace(/\s*\[official\s*audio\]/gi, '')
+    .replace(/\s*\(lyrics?\)/gi, '')
+    .replace(/\s*\[lyrics?\]/gi, '')
+    .replace(/\s*\(audio\)/gi, '')
+    .replace(/\s*\[audio\]/gi, '')
+    .replace(/\s*\(visualizer\)/gi, '')
+    .replace(/\s*\[visualizer\]/gi, '')
+    .replace(/\s*\(lyric video\)/gi, '')
+    .replace(/\s*\[lyric video\]/gi, '')
+    .replace(/\s*HD\s*$/i, '')
+    .replace(/\s*HQ\s*$/i, '')
+    .replace(/[^\w\s]/g, '') // Remove punctuation
+    .replace(/\s+/g, ' ') // Normalize spaces
+    .trim();
+}
+
+// Check if two titles are similar enough to be considered the same song
+function titlesSimilar(title1, title2) {
+  // If either is empty, not similar
+  if (!title1 || !title2) return false;
+  
+  // Exact match
+  if (title1 === title2) return true;
+  
+  // One contains the other (for cases like "Song" vs "Song Remix")
+  if (title1.includes(title2) || title2.includes(title1)) {
+    // Check if the difference is small (like just "remix" or "live")
+    const longer = title1.length > title2.length ? title1 : title2;
+    const shorter = title1.length > title2.length ? title2 : title1;
+    const diff = longer.replace(shorter, '').trim();
+    
+    // If the only difference is a common suffix, consider them similar
+    const commonSuffixes = ['remix', 'live', 'acoustic', 'version', 'edit', 'mix', 'remaster', 'remastered'];
+    if (commonSuffixes.some(s => diff.toLowerCase().includes(s))) {
+      return true;
+    }
+    
+    // If difference is very small, consider similar
+    if (diff.length < 10) return true;
+  }
+  
+  // Calculate simple similarity (shared words)
+  const words1 = new Set(title1.split(' '));
+  const words2 = new Set(title2.split(' '));
+  const intersection = [...words1].filter(w => words2.has(w) && w.length > 2);
+  const similarity = intersection.length / Math.max(words1.size, words2.size);
+  
+  // If more than 70% of words match, consider similar
+  return similarity > 0.7;
 }
 
 // ========================================

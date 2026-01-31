@@ -1040,6 +1040,40 @@ input[type="text"]::placeholder {
   font-weight: 600;
 }
 
+.queue-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auto-queue-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auto-queue-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.auto-queue-btn.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--bg-primary);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
 .queue-count {
   font-size: 12px;
   color: var(--text-muted);
