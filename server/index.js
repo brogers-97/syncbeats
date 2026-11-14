@@ -20,10 +20,13 @@ const rooms = new Map();
 // Generate a random 6-character room code
 function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
+  let code;
+  do {
+    code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+  } while (rooms.has(code));
   return code;
 }
 
@@ -34,7 +37,7 @@ io.on('connection', (socket) => {
   socket.on('create-room', (username) => {
     console.log(`📝 CREATE ROOM request from: ${username}`);
     const roomCode = generateRoomCode();
-    
+
     rooms.set(roomCode, {
       hostId: socket.id,
       queue: [],
@@ -49,8 +52,8 @@ io.on('connection', (socket) => {
     socket.roomCode = roomCode;
     socket.username = username;
 
-    socket.emit('room-created', { 
-      roomCode, 
+    socket.emit('room-created', {
+      roomCode,
       isHost: true,
       users: rooms.get(roomCode).users
     });
@@ -84,19 +87,19 @@ io.on('connection', (socket) => {
       users: room.users
     });
 
-    io.to(roomCode.toUpperCase()).emit('user-joined', { 
-      username, 
-      users: room.users 
+    io.to(roomCode.toUpperCase()).emit('user-joined', {
+      username,
+      users: room.users
     });
 
     console.log(`✅ USER JOINED: ${username} joined room ${roomCode.toUpperCase()}`);
   });
 
   // Add a song to the queue
-  socket.on('add-song', ({ videoId, title, thumbnail, roomCode: passedRoomCode, username: passedUsername }) => {
+  socket.on('add-song', ({ videoId, title, thumbnail, author, lengthSeconds, roomCode: passedRoomCode, username: passedUsername }) => {
     const effectiveRoomCode = socket.roomCode || passedRoomCode;
     const effectiveUsername = socket.username || passedUsername || 'Someone';
-    
+
     if (!socket.roomCode && passedRoomCode) {
       socket.roomCode = passedRoomCode;
       socket.join(passedRoomCode);
@@ -104,7 +107,7 @@ io.on('connection', (socket) => {
     if (!socket.username && passedUsername) {
       socket.username = passedUsername;
     }
-    
+
     console.log(`🎵 ADD SONG from ${effectiveUsername}: ${title}`);
     const room = rooms.get(effectiveRoomCode);
     if (!room) {
@@ -117,12 +120,15 @@ io.on('connection', (socket) => {
       videoId,
       title: title || 'Unknown Title',
       addedBy: effectiveUsername,
-      thumbnail
+      thumbnail,
+      // Shown in the queue: artist line and song length
+      author: typeof author === 'string' ? author.slice(0, 100) : '',
+      lengthSeconds: Number.isFinite(lengthSeconds) ? lengthSeconds : 0
     };
 
     room.queue.push(song);
 
-    io.to(effectiveRoomCode).emit('queue-updated', { 
+    io.to(effectiveRoomCode).emit('queue-updated', {
       queue: room.queue,
       currentIndex: room.currentIndex
     });
@@ -135,8 +141,15 @@ io.on('connection', (socket) => {
     const room = rooms.get(socket.roomCode);
     if (!room || room.hostId !== socket.id) return;
 
+    const currentSongId = room.queue[room.currentIndex]?.id;
     room.queue = newQueue;
-    io.to(socket.roomCode).emit('queue-updated', { 
+
+    if (currentSongId) {
+      const newIndex = newQueue.findIndex(s => s.id === currentSongId);
+      if (newIndex !== -1) room.currentIndex = newIndex;
+    }
+
+    io.to(socket.roomCode).emit('queue-updated', {
       queue: room.queue,
       currentIndex: room.currentIndex
     });
@@ -150,18 +163,53 @@ io.on('connection', (socket) => {
     const index = room.queue.findIndex(s => s.id === songId);
     if (index === -1) return;
 
+    const wasCurrentSong = index === room.currentIndex;
     room.queue.splice(index, 1);
-    
+
     if (index < room.currentIndex) {
       room.currentIndex--;
     } else if (index === room.currentIndex && room.currentIndex >= room.queue.length) {
       room.currentIndex = Math.max(0, room.queue.length - 1);
     }
 
-    io.to(socket.roomCode).emit('queue-updated', { 
+    io.to(socket.roomCode).emit('queue-updated', {
       queue: room.queue,
       currentIndex: room.currentIndex
     });
+
+    if (wasCurrentSong) {
+      if (room.queue.length > 0) {
+        room.currentTime = 0;
+        io.to(socket.roomCode).emit('song-changed', {
+          currentIndex: room.currentIndex,
+          currentTime: 0,
+          isPlaying: room.isPlaying
+        });
+      } else {
+        room.isPlaying = false;
+        io.to(socket.roomCode).emit('playback-state', { isPlaying: false, currentTime: 0 });
+      }
+    }
+  });
+
+  // Host clears the whole queue
+  socket.on('clear-queue', (ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    const room = rooms.get(socket.roomCode);
+    if (!room || room.hostId !== socket.id) return reply({ ok: false });
+
+    room.queue = [];
+    room.currentIndex = 0;
+    room.currentTime = 0;
+    room.isPlaying = false;
+
+    io.to(socket.roomCode).emit('queue-updated', {
+      queue: room.queue,
+      currentIndex: room.currentIndex
+    });
+    io.to(socket.roomCode).emit('playback-state', { isPlaying: false, currentTime: 0 });
+
+    reply({ ok: true });
   });
 
   // Playback controls (host only)
@@ -171,9 +219,9 @@ io.on('connection', (socket) => {
 
     room.isPlaying = true;
     room.lastTimeUpdate = Date.now();
-    io.to(socket.roomCode).emit('playback-state', { 
-      isPlaying: true, 
-      currentTime: room.currentTime 
+    io.to(socket.roomCode).emit('playback-state', {
+      isPlaying: true,
+      currentTime: room.currentTime
     });
   });
 
@@ -182,9 +230,9 @@ io.on('connection', (socket) => {
     if (!room || room.hostId !== socket.id) return;
 
     room.isPlaying = false;
-    io.to(socket.roomCode).emit('playback-state', { 
-      isPlaying: false, 
-      currentTime: room.currentTime 
+    io.to(socket.roomCode).emit('playback-state', {
+      isPlaying: false,
+      currentTime: room.currentTime
     });
   });
 
@@ -195,7 +243,7 @@ io.on('connection', (socket) => {
 
     room.currentTime = currentTime;
     room.lastTimeUpdate = Date.now();
-    
+
     socket.to(socket.roomCode).emit('time-sync', { currentTime });
   });
 
@@ -207,7 +255,7 @@ io.on('connection', (socket) => {
     if (room.currentIndex < room.queue.length - 1) {
       room.currentIndex++;
       room.currentTime = 0;
-      io.to(socket.roomCode).emit('song-changed', { 
+      io.to(socket.roomCode).emit('song-changed', {
         currentIndex: room.currentIndex,
         currentTime: 0
       });
@@ -222,7 +270,7 @@ io.on('connection', (socket) => {
     if (room.currentIndex > 0) {
       room.currentIndex--;
       room.currentTime = 0;
-      io.to(socket.roomCode).emit('song-changed', { 
+      io.to(socket.roomCode).emit('song-changed', {
         currentIndex: room.currentIndex,
         currentTime: 0
       });
@@ -238,7 +286,7 @@ io.on('connection', (socket) => {
       room.currentIndex = index;
       room.currentTime = 0;
       room.isPlaying = true;
-      io.to(socket.roomCode).emit('song-changed', { 
+      io.to(socket.roomCode).emit('song-changed', {
         currentIndex: room.currentIndex,
         currentTime: 0,
         isPlaying: true
@@ -254,7 +302,7 @@ io.on('connection', (socket) => {
     if (room.currentIndex < room.queue.length - 1) {
       room.currentIndex++;
       room.currentTime = 0;
-      io.to(socket.roomCode).emit('song-changed', { 
+      io.to(socket.roomCode).emit('song-changed', {
         currentIndex: room.currentIndex,
         currentTime: 0,
         isPlaying: true
@@ -290,15 +338,15 @@ io.on('connection', (socket) => {
     room.users = room.users.filter(u => u.id !== socket.id);
 
     if (room.hostId === socket.id) {
-      io.to(socket.roomCode).emit('room-closed', { 
-        message: 'The host has left. Room closed.' 
+      io.to(socket.roomCode).emit('room-closed', {
+        message: 'The host has left. Room closed.'
       });
       rooms.delete(socket.roomCode);
       console.log(`Room ${socket.roomCode} closed (host left)`);
     } else {
-      io.to(socket.roomCode).emit('user-left', { 
-        username: socket.username, 
-        users: room.users 
+      io.to(socket.roomCode).emit('user-left', {
+        username: socket.username,
+        users: room.users
       });
     }
   });
@@ -314,14 +362,14 @@ io.on('connection', (socket) => {
     socket.leave(socket.roomCode);
 
     if (room.hostId === socket.id) {
-      io.to(socket.roomCode).emit('room-closed', { 
-        message: 'The host has left. Room closed.' 
+      io.to(socket.roomCode).emit('room-closed', {
+        message: 'The host has left. Room closed.'
       });
       rooms.delete(socket.roomCode);
     } else {
-      io.to(socket.roomCode).emit('user-left', { 
-        username: socket.username, 
-        users: room.users 
+      io.to(socket.roomCode).emit('user-left', {
+        username: socket.username,
+        users: room.users
       });
     }
 
@@ -332,7 +380,7 @@ io.on('connection', (socket) => {
 
 // Health check endpoint
 app.get('/', (req, res) => {
-  res.json({ 
+  res.json({
     status: 'SyncBeats server running',
     rooms: rooms.size,
     uptime: process.uptime()
@@ -342,4 +390,4 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {
   console.log(`🎵 SyncBeats server running on port ${PORT}`);
-});
+});

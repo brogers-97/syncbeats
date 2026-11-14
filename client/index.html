@@ -4,158 +4,432 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SyncBeats</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
-  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    // main.js passes the window style (solid | acrylic | clear) in the address.
+    // It is set here, before anything is drawn, so styles.css can pick the right background.
+    document.documentElement.dataset.window =
+      new URLSearchParams(location.search).get('window') || 'solid';
+  </script>
 </head>
-<body>
-  <!-- Custom Title Bar (draggable) -->
-  <div class="title-bar" id="titleBar">
-    <div class="title-bar-left">
-      <span class="app-icon">♫</span>
-      <span class="app-name">SyncBeats</span>
-    </div>
-    <div class="title-bar-controls">
-      <button class="title-btn pin-btn" id="pinBtn" title="Always on top">📌</button>
-      <button class="title-btn" id="minBtn">─</button>
-      <button class="title-btn close-btn" id="closeBtn">✕</button>
-    </div>
-  </div>
+<!--
+  The <body> attributes drive what is shown (see styles.css):
+    data-view = landing | room            which screen
+    data-mode = full | compact | mini     window size (whole player / slim bar / tiny icon)
+    data-conn = connecting | connected | disconnected | error
+    data-host = true | false              host-only controls
+  app.js updates them; nothing else needs to.
+-->
+<body data-view="landing" data-mode="full" data-conn="connecting" data-host="false">
 
-  <div class="app-container">
-    <!-- Landing / Join Screen -->
-    <div class="screen active" id="landingScreen">
-      <div class="landing-content">
-        <div class="logo-section">
-          <div class="logo-icon">🎧</div>
-          <h1>SyncBeats</h1>
-          <p class="tagline">Listen together, game together</p>
+  <!-- ========================================
+       Icons (referenced with <use href="#i-name">)
+  ======================================== -->
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <linearGradient id="g-wave" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#6fe3ff"/>
+        <stop offset="1" stop-color="#1b9bff"/>
+      </linearGradient>
+    </defs>
+
+    <!-- Logo: sound wave -->
+    <symbol id="i-wave" viewBox="0 0 28 24">
+      <g fill="url(#g-wave)">
+        <rect x="0.7" y="10.5" width="2.6" height="3" rx="1.3"/>
+        <rect x="4.7" y="8" width="2.6" height="8" rx="1.3"/>
+        <rect x="8.7" y="4.5" width="2.6" height="15" rx="1.3"/>
+        <rect x="12.7" y="1" width="2.6" height="22" rx="1.3"/>
+        <rect x="16.7" y="4.5" width="2.6" height="15" rx="1.3"/>
+        <rect x="20.7" y="8" width="2.6" height="8" rx="1.3"/>
+        <rect x="24.7" y="10.5" width="2.6" height="3" rx="1.3"/>
+      </g>
+    </symbol>
+
+    <!-- Window controls -->
+    <symbol id="i-pin" viewBox="0 0 24 24">
+      <g fill="currentColor" transform="rotate(40 12 12)">
+        <path d="M8.2 2.5h7.6a.8.8 0 0 1 .8.95l-.9 4.75 2.9 3.3a1 1 0 0 1 .25.66v.84a.8.8 0 0 1-.8.8H5.95a.8.8 0 0 1-.8-.8v-.84a1 1 0 0 1 .25-.66l2.9-3.3-.9-4.75a.8.8 0 0 1 .8-.95z"/>
+        <path d="M11.1 14.6h1.8v5.6L12 22.4l-.9-2.2z"/>
+      </g>
+    </symbol>
+    <symbol id="i-min" viewBox="0 0 24 24">
+      <path d="M6 12h12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-close" viewBox="0 0 24 24">
+      <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 4h6v6"/>
+        <path d="M20 4l-8.5 8.5"/>
+        <path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>
+      </g>
+    </symbol>
+
+    <!-- Playback -->
+    <symbol id="i-play" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M8.5 5.4v13.2a1 1 0 0 0 1.53.85l10.4-6.6a1 1 0 0 0 0-1.7L10.03 4.55A1 1 0 0 0 8.5 5.4z"/>
+    </symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24">
+      <g fill="currentColor">
+        <rect x="6.5" y="5" width="4" height="14" rx="1.3"/>
+        <rect x="13.5" y="5" width="4" height="14" rx="1.3"/>
+      </g>
+    </symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24">
+      <g fill="currentColor">
+        <rect x="5" y="5.5" width="2.8" height="13" rx="1.1"/>
+        <path d="M19.5 6.6v10.8a.9.9 0 0 1-1.42.74l-7.7-5.4a.9.9 0 0 1 0-1.48l7.7-5.4a.9.9 0 0 1 1.42.74z"/>
+      </g>
+    </symbol>
+    <symbol id="i-next" viewBox="0 0 24 24">
+      <g fill="currentColor">
+        <rect x="16.2" y="5.5" width="2.8" height="13" rx="1.1"/>
+        <path d="M4.5 6.6v10.8a.9.9 0 0 0 1.42.74l7.7-5.4a.9.9 0 0 0 0-1.48l-7.7-5.4a.9.9 0 0 0-1.42.74z"/>
+      </g>
+    </symbol>
+
+    <!-- People -->
+    <symbol id="i-user" viewBox="0 0 24 24">
+      <g fill="currentColor">
+        <circle cx="12" cy="8" r="4"/>
+        <path d="M4 19.6c0-3.7 3.6-6.1 8-6.1s8 2.4 8 6.1a.9.9 0 0 1-.9.9H4.9a.9.9 0 0 1-.9-.9z"/>
+      </g>
+    </symbol>
+    <symbol id="i-users" viewBox="0 0 24 24">
+      <g fill="currentColor">
+        <circle cx="9" cy="8.2" r="3.6"/>
+        <path d="M2 19.2c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5a.8.8 0 0 1-.8.8H2.8a.8.8 0 0 1-.8-.8z"/>
+        <circle cx="17.2" cy="9" r="2.8"/>
+        <path d="M17.2 13.4c2.8 0 4.8 1.7 4.8 4.3a.8.8 0 0 1-.8.8h-3.4c-.1-1.9-.9-3.5-2.3-4.7.5-.25 1.1-.4 1.7-.4z"/>
+      </g>
+    </symbol>
+
+    <!-- General -->
+    <symbol id="i-plus" viewBox="0 0 24 24">
+      <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-hash" viewBox="0 0 24 24">
+      <path d="M9.6 4L8 20M16 4l-1.6 16M4.6 9.2H20M4 14.8h15.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="10.8" cy="10.8" r="6.3"/>
+        <path d="M15.6 15.6L20 20"/>
+      </g>
+    </symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="9" width="11" height="11" rx="2"/>
+        <path d="M5 15V6a2 2 0 0 1 2-2h9"/>
+      </g>
+    </symbol>
+    <symbol id="i-grip" viewBox="0 0 24 24">
+      <g fill="currentColor">
+        <circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/>
+        <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+        <circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/>
+      </g>
+    </symbol>
+    <symbol id="i-dots" viewBox="0 0 24 24">
+      <g fill="currentColor">
+        <circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/>
+      </g>
+    </symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/>
+        <path d="M15 8l4 4-4 4M19 12H9"/>
+      </g>
+    </symbol>
+
+    <!-- Volume -->
+    <symbol id="i-vol" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M3.5 9.6v4.8a1 1 0 0 0 1 1h2.7l4.2 3.5a.75.75 0 0 0 1.2-.6V5.7a.75.75 0 0 0-1.2-.6L7.2 8.6H4.5a1 1 0 0 0-1 1z"/>
+      <path d="M15.6 9.2a4 4 0 0 1 0 5.6M18.3 6.6a7.6 7.6 0 0 1 0 10.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-vol-low" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M3.5 9.6v4.8a1 1 0 0 0 1 1h2.7l4.2 3.5a.75.75 0 0 0 1.2-.6V5.7a.75.75 0 0 0-1.2-.6L7.2 8.6H4.5a1 1 0 0 0-1 1z"/>
+      <path d="M15.6 9.2a4 4 0 0 1 0 5.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-vol-mute" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M3.5 9.6v4.8a1 1 0 0 0 1 1h2.7l4.2 3.5a.75.75 0 0 0 1.2-.6V5.7a.75.75 0 0 0-1.2-.6L7.2 8.6H4.5a1 1 0 0 0-1 1z"/>
+      <path d="M16 9.5l5 5M21 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+    </symbol>
+
+    <!-- Queue actions -->
+    <symbol id="i-shuffle" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16.5 3.5H20.5V7.5"/>
+        <path d="M3.5 20.5L20.5 3.5"/>
+        <path d="M20.5 16.5V20.5H16.5"/>
+        <path d="M14.5 14.5L20.5 20.5"/>
+        <path d="M3.5 3.5L9 9"/>
+      </g>
+    </symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 2.5l4 4-4 4"/>
+        <path d="M3 11.5v-1a4 4 0 0 1 4-4h14"/>
+        <path d="M7 21.5l-4-4 4-4"/>
+        <path d="M21 12.5v1a4 4 0 0 1-4 4H3"/>
+      </g>
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 7h16"/>
+        <path d="M9.5 7V4.9a.9.9 0 0 1 .9-.9h3.2a.9.9 0 0 1 .9.9V7"/>
+        <path d="M6.4 7l.8 11.7A1.8 1.8 0 0 0 9 20.4h6a1.8 1.8 0 0 0 1.8-1.7L17.6 7"/>
+        <path d="M10 11v5.5M14 11v5.5"/>
+      </g>
+    </symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24">
+      <g fill="currentColor">
+        <path d="M9.5 3l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1L2.5 10l5.1-1.9z"/>
+        <path d="M18 13.5l1 2.6 2.5.9-2.5 1-1 2.5-1-2.5-2.5-1 2.5-.9z"/>
+      </g>
+    </symbol>
+  </svg>
+
+  <!-- ========================================
+       App window
+  ======================================== -->
+  <div class="app">
+
+    <!-- Title bar (draggable) -->
+    <header class="titlebar" id="titleBar">
+      <div class="titlebar-brand">
+        <svg class="brand-icon"><use href="#i-wave"/></svg>
+        <span class="brand-name">SyncBeats</span>
+      </div>
+      <div class="titlebar-actions">
+        <button class="tb-btn js-pin" title="Always on top" aria-label="Always on top">
+          <svg class="icon"><use href="#i-pin"/></svg>
+        </button>
+        <button class="tb-btn js-shrink" title="Shrink" aria-label="Shrink">
+          <svg class="icon"><use href="#i-min"/></svg>
+        </button>
+        <button class="tb-btn tb-close" id="closeBtn" title="Close" aria-label="Close">
+          <svg class="icon"><use href="#i-close"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- 1. Home / Room Entry -->
+    <main class="screen screen-landing" id="landingScreen">
+      <div class="hero">
+        <svg class="hero-logo"><use href="#i-wave"/></svg>
+        <h1>SyncBeats</h1>
+        <p class="tagline">Listen together, game together</p>
+      </div>
+
+      <div class="landing-form">
+        <label class="field">
+          <svg class="icon"><use href="#i-user"/></svg>
+          <input type="text" id="usernameInput" placeholder="Enter your name..." maxlength="20"
+                 aria-label="Your name" autocomplete="off" spellcheck="false">
+        </label>
+
+        <button class="btn btn-primary btn-large" id="createRoomBtn">
+          <svg class="icon"><use href="#i-plus"/></svg>
+          Create Room
+        </button>
+
+        <div class="divider"><span>or</span></div>
+
+        <div class="join-row">
+          <label class="field">
+            <svg class="icon"><use href="#i-hash"/></svg>
+            <input type="text" id="roomCodeInput" class="code-input" placeholder="Enter room code..." maxlength="6"
+                   aria-label="Room code" autocomplete="off" spellcheck="false">
+          </label>
+          <button class="btn btn-primary" id="joinRoomBtn">Join</button>
+        </div>
+      </div>
+
+      <div class="status" id="serverStatus">
+        <span class="status-dot"></span>
+        <span class="js-status-text">Connecting...</span>
+      </div>
+    </main>
+
+    <!-- 2 + 3. Room: expanded player, or the compact bar when data-mode="compact" -->
+    <main class="screen screen-room" id="roomScreen">
+
+      <!-- Now playing (this same block becomes the compact bar) -->
+      <section class="player" id="miniPlayer">
+        <span class="player-stripe"></span>
+
+        <div class="art">
+          <svg class="art-placeholder"><use href="#i-wave"/></svg>
+          <img id="miniAlbumArt" src="" alt="">
         </div>
 
-        <div class="username-section">
-          <label for="usernameInput">Your name</label>
-          <input type="text" id="usernameInput" placeholder="Enter your name..." maxlength="20">
+        <div class="player-info">
+          <div class="player-title" id="currentSongTitle">No song playing</div>
+          <div class="player-artist" id="currentSongAddedBy"></div>
         </div>
 
-        <div class="action-buttons">
-          <button class="btn btn-primary" id="createRoomBtn">
-            <span class="btn-icon">+</span>
-            Create Room
+        <div class="transport">
+          <button class="transport-btn" id="prevBtn" title="Previous" aria-label="Previous">
+            <svg class="icon"><use href="#i-prev"/></svg>
           </button>
-          <div class="divider"><span>or</span></div>
-          <div class="join-section">
-            <input type="text" id="roomCodeInput" placeholder="Room code" maxlength="6">
-            <button class="btn btn-secondary" id="joinRoomBtn">Join</button>
+          <button class="transport-btn transport-play" id="playPauseBtn" title="Play" aria-label="Play or pause">
+            <svg class="icon"><use href="#i-play"/></svg>
+          </button>
+          <button class="transport-btn" id="nextBtn" title="Next" aria-label="Next">
+            <svg class="icon"><use href="#i-next"/></svg>
+          </button>
+        </div>
+
+        <div class="progress" id="progressBar">
+          <div class="progress-track">
+            <div class="progress-fill" id="progressFill"></div>
+            <span class="progress-thumb"></span>
           </div>
         </div>
 
-        <div class="server-status" id="serverStatus">
-          <span class="status-dot"></span>
-          <span class="status-text">Connecting...</span>
+        <div class="times">
+          <span id="timeCurrent">0:00</span>
+          <span id="timeTotal">0:00</span>
         </div>
-      </div>
-    </div>
 
-    <!-- Main Room Screen (Widget Mode) -->
-    <div class="screen" id="roomScreen">
-      
-      <!-- Mini Player (Always Visible) -->
-      <div class="mini-player" id="miniPlayer">
-        <div class="mini-player-left">
-          <img class="mini-album-art" id="miniAlbumArt" src="" alt="">
-          <div class="mini-song-info">
-            <div class="mini-song-title" id="currentSongTitle">No song playing</div>
-            <div class="mini-song-artist" id="currentSongAddedBy"></div>
-          </div>
+        <!-- Only shown on the compact bar -->
+        <div class="player-utils">
+          <button class="tb-btn js-pin" title="Always on top" aria-label="Always on top">
+            <svg class="icon"><use href="#i-pin"/></svg>
+          </button>
+          <button class="tb-btn js-shrink" title="Shrink to icon" aria-label="Shrink to icon">
+            <svg class="icon"><use href="#i-min"/></svg>
+          </button>
+          <button class="tb-btn" id="expandBtn" title="Open full player" aria-label="Open full player">
+            <svg class="icon"><use href="#i-expand"/></svg>
+          </button>
         </div>
-        <div class="mini-player-controls">
-          <button class="mini-control-btn" id="prevBtn" title="Previous">⏮</button>
-          <button class="mini-control-btn play-btn" id="playPauseBtn" title="Play/Pause">▶</button>
-          <button class="mini-control-btn" id="nextBtn" title="Next">⏭</button>
-        </div>
+
         <audio id="audioPlayer" preload="auto"></audio>
-      </div>
-      
-      <!-- Progress Bar -->
-      <div class="progress-bar" id="progressBar">
-        <div class="progress-fill" id="progressFill"></div>
-      </div>
-      
-      <!-- Expand/Collapse Button -->
-      <button class="expand-btn" id="expandBtn" title="Expand">
-        <span class="expand-icon">▼</span>
-      </button>
-      
-      <!-- Expanded Panel (Hidden by default) -->
-      <div class="expanded-panel" id="expandedPanel">
-        
-        <!-- Room Info Bar -->
-        <div class="room-info-bar">
-          <div class="room-info">
-            <span class="room-code-label">Room</span>
+      </section>
+
+      <div class="room-body">
+
+        <!-- Room code, people, add song -->
+        <div class="room-row">
+          <div class="chip chip-room">
+            <svg class="icon"><use href="#i-users"/></svg>
+            <span class="chip-label">Room:</span>
             <span class="room-code" id="displayRoomCode">------</span>
-            <button class="copy-btn" id="copyCodeBtn" title="Copy code">📋</button>
+            <button class="chip-action" id="copyCodeBtn" title="Copy room code" aria-label="Copy room code">
+              <svg class="icon"><use href="#i-copy"/></svg>
+            </button>
           </div>
-          <div class="users-count" id="usersCount">
-            <span class="user-icon">👤</span>
+          <button class="chip chip-users" id="usersCount" title="People in room">
+            <svg class="icon"><use href="#i-users"/></svg>
             <span class="count">1</span>
-          </div>
-        </div>
-        
-        <!-- Volume Control -->
-        <div class="volume-control">
-          <span class="volume-icon" id="volumeIcon">🔊</span>
-          <input type="range" id="volumeSlider" min="0" max="100" value="50" class="volume-slider">
+          </button>
+          <button class="btn btn-primary btn-add" id="addSongBtn" title="Search for a song to add">
+            <svg class="icon"><use href="#i-plus"/></svg>
+            Add Song
+          </button>
         </div>
 
-        <!-- Search Song Section -->
-        <div class="search-song-section">
-          <div class="search-input-wrapper">
-            <input type="text" id="songSearchInput" placeholder="Search for a song...">
-            <button class="btn btn-search" id="searchSongBtn">🔍</button>
+        <!-- Search -->
+        <div class="search">
+          <div class="field field-search">
+            <button class="field-action" id="searchSongBtn" title="Search" aria-label="Search">
+              <svg class="icon"><use href="#i-search"/></svg>
+            </button>
+            <input type="text" id="songSearchInput" placeholder="Search for a song..."
+                   aria-label="Search for a song" autocomplete="off" spellcheck="false">
           </div>
           <div class="search-results" id="searchResults">
             <!-- Search results will appear here -->
           </div>
         </div>
 
-        <!-- Queue Section -->
-        <div class="queue-section">
-          <div class="queue-header">
-            <h3>Queue</h3>
-            <div class="queue-header-right">
-              <button class="auto-queue-btn" id="repeatBtn" title="Repeat OFF - Click to enable">🔁</button>
-              <button class="auto-queue-btn" id="autoQueueBtn" title="Auto-queue OFF - Click to enable">🎲</button>
-              <span class="queue-count" id="queueCount">0 songs</span>
-            </div>
-          </div>
-          <div class="queue-list" id="queueList">
-            <div class="empty-queue">
-              <p>Queue is empty</p>
-              <p class="hint">Search for songs above</p>
-            </div>
+        <!-- Queue -->
+        <div class="queue-list" id="queueList">
+          <div class="empty-queue">
+            <p>Queue is empty</p>
+            <p class="hint">Search for a song to get started</p>
           </div>
         </div>
-
-        <!-- Leave Button -->
-        <button class="btn btn-leave" id="leaveRoomBtn">Leave Room</button>
       </div>
-    </div>
+
+      <!-- Bottom bar: status, volume, queue actions -->
+      <footer class="footer">
+        <div class="status">
+          <span class="status-dot"></span>
+          <span class="js-status-text">Connecting...</span>
+        </div>
+
+        <div class="volume">
+          <button class="icon-btn" id="volumeIcon" title="Mute / unmute" aria-label="Mute or unmute">
+            <svg class="icon"><use href="#i-vol"/></svg>
+          </button>
+          <input type="range" id="volumeSlider" min="0" max="100" value="50" class="volume-slider" aria-label="Volume">
+        </div>
+
+        <div class="footer-actions">
+          <button class="icon-btn host-only" id="autoQueueBtn" title="Auto-queue OFF - Click to enable" aria-label="Auto-queue">
+            <svg class="icon"><use href="#i-auto"/></svg>
+          </button>
+          <button class="icon-btn host-only" id="shuffleBtn" title="Shuffle upcoming songs" aria-label="Shuffle upcoming songs">
+            <svg class="icon"><use href="#i-shuffle"/></svg>
+          </button>
+          <button class="icon-btn host-only" id="repeatBtn" title="Repeat OFF - Click to enable" aria-label="Repeat">
+            <svg class="icon"><use href="#i-repeat"/></svg>
+          </button>
+          <button class="icon-btn host-only" id="clearQueueBtn" title="Clear queue" aria-label="Clear queue">
+            <svg class="icon"><use href="#i-trash"/></svg>
+          </button>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <!-- 4. Collapsed: tiny icon, click to reopen, drag to move -->
+  <button class="mini-icon" id="miniIcon" title="Open SyncBeats" aria-label="Open SyncBeats">
+    <svg class="mini-wave"><use href="#i-wave"/></svg>
+    <span class="status-dot"></span>
+  </button>
+
+  <!-- Per-song menu (opened from the "..." button on a queue row) -->
+  <div class="menu" id="queueMenu" hidden>
+    <button class="menu-item" data-action="play">
+      <svg class="icon"><use href="#i-play"/></svg>
+      Play now
+    </button>
+    <button class="menu-item menu-danger" data-action="remove">
+      <svg class="icon"><use href="#i-trash"/></svg>
+      Remove
+    </button>
   </div>
 
   <!-- Toast Notifications -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <!-- Users Modal -->
+  <!-- People in room (also where Leave Room lives) -->
   <div class="modal" id="usersModal">
     <div class="modal-content">
       <div class="modal-header">
         <h3>People in Room</h3>
-        <button class="modal-close" id="closeUsersModal">✕</button>
+        <button class="tb-btn" id="closeUsersModal" title="Close" aria-label="Close">
+          <svg class="icon"><use href="#i-close"/></svg>
+        </button>
       </div>
       <div class="users-list" id="usersList"></div>
+      <div class="modal-footer">
+        <button class="btn btn-leave" id="leaveRoomBtn">
+          <svg class="icon"><use href="#i-logout"/></svg>
+          Leave Room
+        </button>
+      </div>
     </div>
   </div>
 
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
